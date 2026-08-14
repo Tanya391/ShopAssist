@@ -1,0 +1,44 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model SupportTicket {
+  id              String   @id @default(uuid())
+  ticketNumber    String?
+  customerName    String
+  email           String?
+  orderId         String?
+  category        String
+  description     String
+  priority        String
+  status          String
+  createdAt       DateTime @default(now())
+  resolutionNotes String?
+}
+
+model Order {
+  orderId           String   @id
+  customerName      String
+  status            String
+  carrier           String?
+  trackingNumber    String?
+  estimatedDelivery String?
+  deliveredDate     String?
+  totalAmount       Float
+  returnEligible    Boolean
+  itemsJson         String?
+}
+
+model KnowledgeDoc {
+  id        String   @id @default(uuid())
+  title     String
+  fileName  String
+  content   String
+  updatedAt DateTime @default(now())
+}
