@@ -6,17 +6,14 @@ import { KnowledgeBaseManager } from './components/KnowledgeBaseManager.jsx';
 import { TicketsManager } from './components/TicketsManager.jsx';
 import { OrdersManager } from './components/OrdersManager.jsx';
 import { SystemLogs } from './components/SystemLogs.jsx';
+import { Auth } from './components/Auth.jsx';
+
+const API_BASE = import.meta.env.VITE_API_URL || '';
 
 const INITIAL_WELCOME_MESSAGE = {
   id: 'msg-welcome',
   sender: 'assistant',
-  text: `👋 Hi! Welcome to **ShopAssist**. How can I help you today?
-
-Feel free to ask about:
-• **Order Status** (e.g. check status for **ORD-1002**)
-• **Returns & Refunds** (30-day policy & process)
-• **Shipping & Warranty** details
-• **Filing a Support Ticket** for damaged or missing items`,
+  text: `👋 Hi! Welcome to **ShopAssist**. How can I help you today?`,
   timestamp: new Date().toLocaleTimeString(),
   intent: 'FAQ'
 };
@@ -30,14 +27,37 @@ export default function App() {
   const [tickets, setTickets] = useState([]);
   const [orders, setOrders] = useState([]);
   const [logs, setLogs] = useState([]);
+  
+  const [auth, setAuth] = useState(() => {
+    const saved = localStorage.getItem('auth');
+    return saved ? JSON.parse(saved) : null;
+  });
+
+  const handleLogin = (data) => {
+    setAuth(data);
+    localStorage.setItem('auth', JSON.stringify(data));
+    setActiveTab('chat');
+  };
+
+  const handleLogout = () => {
+    setAuth(null);
+    localStorage.removeItem('auth');
+    setActiveTab('home');
+  };
+
+  const authHeaders = {
+    'Authorization': auth ? `Bearer ${auth.token}` : '',
+    'Content-Type': 'application/json'
+  };
 
   const fetchData = async () => {
+    if (!auth || auth.user.role !== 'admin') return;
     try {
       const [kRes, tRes, oRes, lRes] = await Promise.all([
-        fetch('/api/knowledge'),
-        fetch('/api/tickets'),
-        fetch('/api/orders'),
-        fetch('/api/logs')
+        fetch(`${API_BASE}/api/knowledge`, { headers: authHeaders }),
+        fetch(`${API_BASE}/api/tickets`, { headers: authHeaders }),
+        fetch(`${API_BASE}/api/orders`, { headers: authHeaders }),
+        fetch(`${API_BASE}/api/logs`, { headers: authHeaders })
       ]);
 
       if (kRes.ok) setKnowledgeDocs(await kRes.json());
@@ -51,9 +71,13 @@ export default function App() {
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [auth]);
 
   const handleSendMessage = async (userQueryText) => {
+    if (!auth) {
+      setActiveTab('auth');
+      return;
+    }
     const userMsg = {
       id: `msg-user-${Date.now()}`,
       sender: 'user',
@@ -65,9 +89,9 @@ export default function App() {
     setIsLoading(true);
 
     try {
-      const res = await fetch('/api/chat', {
+      const res = await fetch(`${API_BASE}/api/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders,
         body: JSON.stringify({ query: userQueryText, history: messages })
       });
 
@@ -116,55 +140,66 @@ export default function App() {
   };
 
   const handleUpdateDocument = async (docId, title, content) => {
-    const res = await fetch(`/api/knowledge/${docId}`, {
+    const res = await fetch(`${API_BASE}/api/knowledge/${docId}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({ title, content })
     });
     if (res.ok) fetchData();
   };
 
   const handleCreateTicket = async (ticketData) => {
-    const res = await fetch('/api/tickets', {
+    const res = await fetch(`${API_BASE}/api/tickets`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify(ticketData)
     });
     if (res.ok) fetchData();
   };
 
   const handleUpdateTicketStatus = async (ticketId, status, resolutionNotes) => {
-    const res = await fetch(`/api/tickets/${ticketId}`, {
+    const res = await fetch(`${API_BASE}/api/tickets/${ticketId}`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({ status, resolutionNotes })
     });
     if (res.ok) fetchData();
   };
 
   const handleStartChatWithQuery = (query) => {
-    setActiveTab('chat');
-    handleSendMessage(query);
+    if (!auth) {
+      setActiveTab('auth');
+    } else {
+      setActiveTab('chat');
+      handleSendMessage(query);
+    }
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-violet-500 selection:text-white bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-violet-100/30 via-slate-50 to-slate-100/50">
+    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-orange-500 selection:text-white bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-orange-100/30 via-slate-50 to-slate-100/50">
       <Header
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         onResetChat={handleResetChat}
+        auth={auth}
+        onLogout={handleLogout}
       />
 
       <main className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto">
         {activeTab === 'home' && (
           <HeroSection
-            onStartChat={() => setActiveTab('chat')}
+            onStartChat={() => auth ? setActiveTab('chat') : setActiveTab('auth')}
             onViewKnowledge={() => setActiveTab('knowledge')}
             onStartChatWithQuery={handleStartChatWithQuery}
+            auth={auth}
           />
         )}
 
-        {activeTab === 'chat' && (
+        {activeTab === 'auth' && (
+          <Auth onLogin={handleLogin} />
+        )}
+
+        {activeTab === 'chat' && auth && (
           <ChatInterface
             messages={messages}
             onSendMessage={handleSendMessage}
@@ -174,14 +209,15 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'knowledge' && (
+        {activeTab === 'knowledge' && auth?.user?.role === 'admin' && (
           <KnowledgeBaseManager
             documents={knowledgeDocs}
             onUpdateDocument={handleUpdateDocument}
+            auth={auth}
           />
         )}
 
-        {activeTab === 'tickets' && (
+        {activeTab === 'tickets' && auth?.user?.role === 'admin' && (
           <TicketsManager
             tickets={tickets}
             onCreateTicket={handleCreateTicket}
@@ -189,11 +225,11 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'orders' && (
+        {activeTab === 'orders' && auth?.user?.role === 'admin' && (
           <OrdersManager orders={orders} />
         )}
 
-        {activeTab === 'logs' && (
+        {activeTab === 'logs' && auth?.user?.role === 'admin' && (
           <SystemLogs logs={logs} onRefreshLogs={fetchData} />
         )}
       </main>

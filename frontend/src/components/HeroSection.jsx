@@ -1,167 +1,82 @@
 import React, { useState } from 'react';
-import {
-  Bot,
-  Search,
-  Package,
-  ShieldCheck,
-  Ticket,
-  MessageSquare,
-  ArrowRight,
-  HelpCircle,
-  Sparkles
-} from 'lucide-react';
+import { Bot, Zap, ShieldCheck, ArrowRight, Library } from 'lucide-react';
 
-export const HeroSection = ({ onStartChat, onViewKnowledge, onStartChatWithQuery }) => {
-  const [quickQuery, setQuickQuery] = useState('');
+export const HeroSection = ({ onStartChat, onViewKnowledge, onStartChatWithQuery, auth }) => {
+  const [query, setQuery] = useState('');
 
-  const handleSearchSubmit = (e) => {
+  const handleSearch = (e) => {
     e.preventDefault();
-    if (!quickQuery.trim()) {
-      onStartChat();
-      return;
-    }
-    if (onStartChatWithQuery) {
-      onStartChatWithQuery(quickQuery.trim());
-    } else {
-      onStartChat();
-    }
-  };
-
-  const handleTopicClick = (prompt) => {
-    if (onStartChatWithQuery) {
-      onStartChatWithQuery(prompt);
-    } else {
-      onStartChat();
+    if (query.trim()) {
+      onStartChatWithQuery(query);
     }
   };
 
   return (
-    <div className="space-y-10 pb-12 max-w-5xl mx-auto">
-      {/* Hero Banner */}
-      <section className="relative overflow-hidden pt-12 pb-14 bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white rounded-3xl border border-slate-800 shadow-2xl p-6 sm:p-12 text-center space-y-6">
-        <div className="absolute -top-20 left-1/2 -translate-x-1/2 w-96 h-96 bg-violet-600/20 rounded-full blur-3xl pointer-events-none" />
+    <div className="flex flex-col items-center text-center py-20 px-4">
+      <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-orange-100/50 border border-orange-200 text-orange-700 text-xs font-semibold mb-8">
+        <Zap className="w-3.5 h-3.5" /> Powered by Google Gemini & Pinecone
+      </div>
+      
+      <h1 className="text-4xl md:text-5xl font-extrabold text-slate-900 tracking-tight max-w-3xl mb-6 leading-tight">
+        The intelligent support agent for <br className="hidden md:block" />
+        <span className="bg-gradient-to-r from-orange-600 to-amber-600 bg-clip-text text-transparent">your e-commerce store</span>
+      </h1>
+      
+      <p className="text-slate-500 text-lg max-w-2xl mb-10 leading-relaxed">
+        ShopAssist AI resolves customer inquiries instantly using a RAG-powered knowledge base.
+        It safely accesses order statuses and seamlessly escalates complex issues to human agents.
+      </p>
 
-        <div className="relative max-w-2xl mx-auto space-y-4">
-          <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-violet-500/10 border border-violet-400/20 text-violet-300 text-xs font-semibold">
-            <Sparkles className="w-3.5 h-3.5 text-violet-400" />
-            ShopAssist Intelligent Support Hub
-          </div>
-
-          <h1 className="text-3xl sm:text-5xl font-extrabold tracking-tight text-white leading-tight">
-            How can we help you today?
-          </h1>
-
-          <p className="text-sm sm:text-base text-slate-300 max-w-lg mx-auto">
-            Get instant answers regarding orders, returns, shipping policies, or file a support
-            ticket in seconds.
-          </p>
-
-          <form
-            onSubmit={handleSearchSubmit}
-            className="pt-2 max-w-xl mx-auto flex items-center gap-2 bg-white/10 backdrop-blur-md p-2 rounded-2xl border border-white/20 shadow-lg"
-          >
-            <div className="pl-3 text-slate-300">
-              <Search className="w-4 h-4" />
-            </div>
-            <input
-              type="text"
-              value={quickQuery}
-              onChange={(e) => setQuickQuery(e.target.value)}
-              placeholder="Ask a question or enter order ID (e.g. ORD-1002)..."
-              className="flex-1 bg-transparent text-xs sm:text-sm text-white placeholder-slate-400 focus:outline-none px-2 py-2"
-            />
-            <button
-              type="submit"
-              className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white text-xs sm:text-sm font-semibold transition-all flex items-center gap-1.5 whitespace-nowrap shadow-md shadow-violet-500/20"
-            >
-              <span>Ask AI</span>
-              <ArrowRight className="w-4 h-4" />
-            </button>
-          </form>
-        </div>
-      </section>
-
-      {/* Category Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-        <div
-          onClick={() => handleTopicClick('Where is my order ORD-1002?')}
-          className="bg-white hover:bg-slate-50/80 border border-slate-200/80 p-5 rounded-2xl cursor-pointer transition-all hover:border-violet-300 shadow-sm hover:shadow-md space-y-3 group"
-        >
-          <div className="w-10 h-10 rounded-xl bg-amber-50 border border-amber-200/80 text-amber-700 flex items-center justify-center group-hover:scale-105 transition-transform">
-            <Package className="w-5 h-5" />
-          </div>
-          <div>
-            <h3 className="font-bold text-slate-900 text-sm">Track Order</h3>
-            <p className="text-xs text-slate-500 mt-1">Check status and delivery estimates</p>
-          </div>
-        </div>
-
-        <div
-          onClick={() => handleTopicClick('What is your return policy?')}
-          className="bg-white hover:bg-slate-50/80 border border-slate-200/80 p-5 rounded-2xl cursor-pointer transition-all hover:border-violet-300 shadow-sm hover:shadow-md space-y-3 group"
-        >
-          <div className="w-10 h-10 rounded-xl bg-cyan-50 border border-cyan-200/80 text-cyan-700 flex items-center justify-center group-hover:scale-105 transition-transform">
-            <ShieldCheck className="w-5 h-5" />
-          </div>
-          <div>
-            <h3 className="font-bold text-slate-900 text-sm">Returns & Refunds</h3>
-            <p className="text-xs text-slate-500 mt-1">30-day money-back guarantee</p>
-          </div>
-        </div>
-
-        <div
-          onClick={() => handleTopicClick('I received a damaged item and need help')}
-          className="bg-white hover:bg-slate-50/80 border border-slate-200/80 p-5 rounded-2xl cursor-pointer transition-all hover:border-violet-300 shadow-sm hover:shadow-md space-y-3 group"
-        >
-          <div className="w-10 h-10 rounded-xl bg-rose-50 border border-rose-200/80 text-rose-700 flex items-center justify-center group-hover:scale-105 transition-transform">
-            <Ticket className="w-5 h-5" />
-          </div>
-          <div>
-            <h3 className="font-bold text-slate-900 text-sm">Support Tickets</h3>
-            <p className="text-xs text-slate-500 mt-1">Report damaged or missing items</p>
-          </div>
-        </div>
-
-        <div
+      <div className="flex flex-col sm:flex-row items-center gap-4 w-full max-w-md mx-auto mb-16">
+        <button 
           onClick={onStartChat}
-          className="bg-white hover:bg-slate-50/80 border border-slate-200/80 p-5 rounded-2xl cursor-pointer transition-all hover:border-violet-300 shadow-sm hover:shadow-md space-y-3 group"
-        >
-          <div className="w-10 h-10 rounded-xl bg-violet-50 border border-violet-200/80 text-violet-700 flex items-center justify-center group-hover:scale-105 transition-transform">
-            <MessageSquare className="w-5 h-5" />
-          </div>
-          <div>
-            <h3 className="font-bold text-slate-900 text-sm">Chat Assistant</h3>
-            <p className="text-xs text-slate-500 mt-1">Talk to our AI for instant support</p>
-          </div>
-        </div>
+          className="w-full sm:w-auto px-8 py-3.5 bg-orange-600 hover:bg-orange-700 text-white font-semibold rounded-2xl transition-all shadow-lg shadow-orange-500/25 flex items-center justify-center gap-2">
+          <img src="/assets/logo.png" className="w-5 h-5 object-contain brightness-0 invert" alt="Logo" /> Chat with ShopAssist
+        </button>
+        {auth?.user?.role === 'admin' && (
+          <button 
+            onClick={onViewKnowledge}
+            className="w-full sm:w-auto px-8 py-3.5 bg-white hover:bg-slate-50 text-slate-700 font-semibold rounded-2xl transition-all border border-slate-200/80 shadow-sm flex items-center justify-center gap-2">
+            <Library className="w-5 h-5 text-orange-600" /> View Knowledge Base
+          </button>
+        )}
       </div>
 
-      {/* Footer Bar */}
-      <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-violet-50 text-violet-700 flex items-center justify-center shrink-0 border border-violet-100">
-            <HelpCircle className="w-5 h-5" />
+      <form onSubmit={handleSearch} className="w-full max-w-2xl relative mb-16 group">
+        <div className="absolute inset-0 bg-gradient-to-r from-orange-500/20 to-amber-500/20 blur-xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-500 -z-10" />
+        <input 
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="How can we help you today?"
+          className="w-full pl-6 pr-14 py-4 rounded-full border border-slate-200/80 shadow-sm bg-white/80 backdrop-blur-sm text-slate-900 focus:outline-none focus:border-orange-500 focus:ring-4 focus:ring-orange-500/10 transition-all"
+        />
+        <button type="submit" className="absolute right-2 top-2 bottom-2 aspect-square bg-orange-600 hover:bg-orange-700 text-white rounded-full flex items-center justify-center transition-colors shadow-sm">
+          <ArrowRight className="w-5 h-5" />
+        </button>
+      </form>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-4xl w-full">
+        <div className="bg-white/60 backdrop-blur-sm border border-slate-200/60 p-6 rounded-3xl text-left">
+          <div className="bg-orange-100/50 w-10 h-10 rounded-xl flex items-center justify-center mb-4 border border-orange-200/50">
+            <ShieldCheck className="w-5 h-5 text-orange-700" />
           </div>
-          <div>
-            <h4 className="font-semibold text-slate-900 text-sm">Need detailed policy documents?</h4>
-            <p className="text-xs text-slate-500">
-              Explore company FAQs, shipping terms, and warranty guides.
-            </p>
-          </div>
+          <h3 className="font-bold text-slate-900 mb-2">Verified RAG</h3>
+          <p className="text-sm text-slate-500 leading-relaxed">Grounds all answers in the Pinecone vector database using indexed company policies, preventing hallucinations.</p>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={onViewKnowledge}
-            className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold border border-slate-200 transition-colors whitespace-nowrap"
-          >
-            View Knowledge Base
-          </button>
-          <button
-            onClick={onStartChat}
-            className="px-4 py-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white text-xs font-semibold transition-all whitespace-nowrap shadow-md shadow-violet-500/20"
-          >
-            Start Chat
-          </button>
+        <div className="bg-white/60 backdrop-blur-sm border border-slate-200/60 p-6 rounded-3xl text-left">
+          <div className="bg-orange-100/50 w-10 h-10 rounded-xl flex items-center justify-center mb-4 border border-orange-200/50">
+            <img src="/assets/logo.png" className="w-5 h-5 object-contain" alt="Logo" />
+          </div>
+          <h3 className="font-bold text-slate-900 mb-2">LangGraph Workflow</h3>
+          <p className="text-sm text-slate-500 leading-relaxed">Uses a cyclic graph to dynamically route intent, query APIs, and synthesize the final response.</p>
+        </div>
+        <div className="bg-white/60 backdrop-blur-sm border border-slate-200/60 p-6 rounded-3xl text-left">
+          <div className="bg-orange-100/50 w-10 h-10 rounded-xl flex items-center justify-center mb-4 border border-orange-200/50">
+            <Zap className="w-5 h-5 text-orange-700" />
+          </div>
+          <h3 className="font-bold text-slate-900 mb-2">Tool Calling</h3>
+          <p className="text-sm text-slate-500 leading-relaxed">Securely reads database records using Gemini 1.5 function calling to answer order-specific questions.</p>
         </div>
       </div>
     </div>

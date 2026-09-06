@@ -1,0 +1,26 @@
+{
+  "faq.md": {
+    "hash": "58ee16e0868dcebcf34b3c3cfbe6580d641c0c0aeac91ca629f71c0235d3c20c",
+    "chunkCount": 4
+  },
+  "product-information.md": {
+    "hash": "66530eb0025fbc8a500d7728b353d8519b4d133a5c80b15b8ae2930400255926",
+    "chunkCount": 3
+  },
+  "refund-policy.md": {
+    "hash": "11cb964680a03194c7cebbc994ed19189bfc51c6ab6c49c6291ff8c822357929",
+    "chunkCount": 4
+  },
+  "return-policy.md": {
+    "hash": "716da30136cee571d761eca48a89c3c6e313be093e35695243cc7bcd424bae55",
+    "chunkCount": 3
+  },
+  "shipping-policy.md": {
+    "hash": "c209ea1fe4efba2ee80a4038fb90877c7a2c342cf492de9304bbbd41fc05e723",
+    "chunkCount": 5
+  },
+  "warranty-policy.md": {
+    "hash": "013986a3b7dcfd38f8f716bd2288d05e08d5c8513fab8daa0ee88665588dc14e",
+    "chunkCount": 3
+  }
+}

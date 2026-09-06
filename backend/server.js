@@ -3,8 +3,12 @@ import express from 'express';
 import path from 'path';
 import { processSupportWorkflow } from './lib/workflowEngine.js';
 import { prisma } from './lib/prisma.js';
-import { indexKnowledgeBaseToPinecone } from './lib/retriever.js';
+import { indexKnowledgeBaseToPinecone, indexSingleDocumentToPinecone } from './lib/retriever.js';
 import cors from 'cors';
+import rateLimit from 'express-rate-limit';
+import crypto from 'crypto';
+import { authenticateToken, requireAdmin, generateToken } from './lib/auth.js';
+import bcrypt from 'bcryptjs';
 
 // System execution logs
 const systemLogs = [
@@ -32,19 +36,27 @@ function addLog(type, category, message, metadata) {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = process.env.PORT || 3000;
 
   app.use(express.json());
-  app.use(cors({ origin: 'http://localhost:5173', credentials: true }));
+  app.use(cors({ origin: process.env.FRONTEND_ORIGIN || 'http://localhost:5173', credentials: true }));
+
+  const chatRateLimiter = rateLimit({
+    windowMs: parseInt(process.env.CHAT_RATE_LIMIT_WINDOW_MS || '60000', 10),
+    max: parseInt(process.env.CHAT_RATE_LIMIT_MAX_REQUESTS || '10', 10),
+    message: { error: 'Too many requests. Please try again later.' },
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
 
   // Index Markdown Knowledge Base into Pinecone Vector Store on Startup
   try {
-    const chunkCount = await indexKnowledgeBaseToPinecone();
-    addLog(
-      'INFO',
-      'PineconeIndexer',
-      `Successfully indexed ${chunkCount} markdown chunks into Pinecone vector store.`
-    );
+    // const chunkCount = await indexKnowledgeBaseToPinecone();
+    // addLog(
+    //   'INFO',
+    //   'PineconeIndexer',
+    //   `Successfully indexed ${chunkCount} markdown chunks into Pinecone vector store.`
+    // );
   } catch (err) {
     console.warn('Pinecone initialization error:', err);
     addLog(
@@ -54,44 +66,75 @@ async function startServer() {
     );
   }
 
-  // Health check
+  
+  // Auth APIs
+  app.post('/api/auth/signup', async (req, res) => {
+    try {
+      const { email, password, name } = req.body;
+      if (!email || !password || !name) return res.status(400).json({ error: 'Name, email and password required' });
+      
+      const existing = await prisma.user.findUnique({ where: { email } });
+      if (existing) return res.status(400).json({ error: 'User already exists' });
+      
+      const hashedPassword = await bcrypt.hash(password, 10);
+      const user = await prisma.user.create({
+        data: { email, password: hashedPassword, name }
+      });
+      
+      const token = generateToken(user);
+      res.json({ token, user: { name: user.name, email: user.email, role: user.role } });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Signup failed' });
+    }
+  });
+
+  app.post('/api/auth/login', async (req, res) => {
+    try {
+      const { email, password } = req.body;
+      const user = await prisma.user.findUnique({ where: { email } });
+      if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+      
+      const valid = await bcrypt.compare(password, user.password);
+      if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+      
+      const token = generateToken(user);
+      res.json({ token, user: { name: user.name, email: user.email, role: user.role } });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Login failed' });
+    }
+  });
+
+// Health check
   app.get('/api/health', async (req, res) => {
     try {
-      const [docs, tickets, orders] = await Promise.all([
-        prisma.knowledgeDoc.findMany(),
-        prisma.supportTicket.findMany(),
-        prisma.order.findMany()
-      ]);
-
       res.json({
         status: 'ok',
-        service: 'ShopAssist AI (Prisma + Pinecone)',
-        model: 'gemini-2.0-flash',
-        hasApiKey: Boolean(process.env.GEMINI_API_KEY),
-        database: 'Supabase PostgreSQL via Prisma ORM',
-        vectorDatabase: 'Pinecone Vector Store',
-        knowledgeDocsCount: docs.length,
-        ticketsCount: tickets.length,
-        ordersCount: orders.length
+        service: 'ShopAssist AI'
       });
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      console.error('[HealthCheck] Error:', err.message);
+      res.status(500).json({ error: 'An error occurred while processing your request.' });
     }
   });
 
   // Chat endpoint
-  app.post('/api/chat', async (req, res) => {
+  app.post('/api/chat', chatRateLimiter, authenticateToken, async (req, res) => {
     try {
       const { query, history = [], sessionContext } = req.body;
 
+      const maxQueryLength = parseInt(process.env.MAX_QUERY_LENGTH || '4000', 10);
       if (!query || typeof query !== 'string' || !query.trim()) {
         return res.status(400).json({ error: 'Query parameter cannot be empty.' });
+      }
+      if (query.length > maxQueryLength) {
+        return res.status(400).json({ error: 'Query exceeds maximum allowed length.' });
       }
 
       addLog('INFO', 'ChatRequest', `Received query: "${query.slice(0, 40)}..."`);
 
-      const currentDocs = await prisma.knowledgeDoc.findMany();
-      const result = await processSupportWorkflow(query, history, currentDocs, sessionContext);
+      const result = await processSupportWorkflow(query, history, sessionContext);
 
       addLog('WORKFLOW', 'WorkflowTrace', `Processed query under intent ${result.intent}`, {
         intent: result.intent,
@@ -102,26 +145,26 @@ async function startServer() {
 
       res.json(result);
     } catch (err) {
-      console.error('Error handling /api/chat:', err);
+      console.error('Error handling /api/chat:', err.message);
       addLog('ERROR', 'ChatEndpoint', `Error processing chat query: ${err.message}`);
       res.status(500).json({
-        error: 'An error occurred while processing your request.',
-        details: err.message
+        error: 'An error occurred while processing your request.'
       });
     }
   });
 
   // Knowledge Base APIs
-  app.get('/api/knowledge', async (req, res) => {
+  app.get('/api/knowledge', requireAdmin, async (req, res) => {
     try {
       const docs = await prisma.knowledgeDoc.findMany();
       res.json(docs);
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      console.error('[Knowledge API] Error:', err.message);
+      res.status(500).json({ error: 'An error occurred while processing your request.' });
     }
   });
 
-  app.put('/api/knowledge/:id', async (req, res) => {
+  app.put('/api/knowledge/:id', requireAdmin, async (req, res) => {
     try {
       const { id } = req.params;
       const { content, title } = req.body;
@@ -131,54 +174,73 @@ async function startServer() {
         data: { title, content }
       });
 
-      // Re-index into Pinecone
-      await indexKnowledgeBaseToPinecone();
+      // Index only the updated document into Pinecone
+      await indexSingleDocumentToPinecone(updated.fileName, updated.title, updated.content);
 
       addLog(
         'INFO',
         'KnowledgeBase',
-        `Updated document ${updated.fileName} in Prisma and re-indexed Pinecone`
+        `Updated document ${updated.fileName} in Prisma and selectively re-indexed Pinecone`
       );
       res.json(updated);
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      console.error('[Knowledge API] Error:', err.message);
+      res.status(500).json({ error: 'An error occurred while processing your request.' });
+    }
+  });
+
+  app.post('/api/knowledge/reindex', requireAdmin, async (req, res) => {
+    try {
+      const chunkCount = await indexKnowledgeBaseToPinecone();
+      addLog(
+        'INFO',
+        'PineconeIndexer',
+        `Manual full re-index complete: indexed ${chunkCount} new/updated chunks into Pinecone.`
+      );
+      res.json({ success: true, message: `Re-indexed ${chunkCount} chunks. Unchanged documents were skipped.` });
+    } catch (err) {
+      console.error('[Knowledge API] Error:', err.message);
+      res.status(500).json({ error: 'An error occurred while processing your request.' });
     }
   });
 
   // Orders API
-  app.get('/api/orders', async (req, res) => {
+  app.get('/api/orders', requireAdmin, async (req, res) => {
     try {
       const orders = await prisma.order.findMany();
-      res.json(orders);
+      res.json(orders.map(o => ({ ...o, items: JSON.parse(o.itemsJson || '[]') })));
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      console.error('[Orders API] Error:', err.message);
+      res.status(500).json({ error: 'An error occurred while processing your request.' });
     }
   });
 
-  app.get('/api/orders/:id', async (req, res) => {
+  app.get('/api/orders/:id', requireAdmin, async (req, res) => {
     try {
       const orderId = req.params.id.toUpperCase();
       const order = await prisma.order.findUnique({ where: { orderId } });
       if (!order) {
         return res.status(404).json({ error: `Order ${orderId} not found.` });
       }
-      res.json(order);
+      res.json({ ...order, items: JSON.parse(order.itemsJson || '[]') });
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      console.error('[Orders API] Error:', err.message);
+      res.status(500).json({ error: 'An error occurred while processing your request.' });
     }
   });
 
   // Tickets API
-  app.get('/api/tickets', async (req, res) => {
+  app.get('/api/tickets', requireAdmin, async (req, res) => {
     try {
       const tickets = await prisma.supportTicket.findMany();
       res.json(tickets);
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      console.error('[Tickets API] Error:', err.message);
+      res.status(500).json({ error: 'An error occurred while processing your request.' });
     }
   });
 
-  app.post('/api/tickets', async (req, res) => {
+  app.post('/api/tickets', requireAdmin, async (req, res) => {
     try {
       const { customerName, orderId, category, description, priority, email } = req.body;
       if (!customerName || !description) {
@@ -187,8 +249,12 @@ async function startServer() {
           .json({ error: 'Customer Name and Description are required.' });
       }
 
+      const fullUuid = crypto.randomUUID();
+      const tNum = `TICK-${fullUuid.toUpperCase()}`;
       const newTicket = await prisma.supportTicket.create({
         data: {
+          id: fullUuid,
+          ticketNumber: tNum,
           customerName,
           email: email || `${customerName.toLowerCase().replace(/\s+/g, '.')}@example.com`,
           orderId: orderId || 'N/A',
@@ -206,11 +272,12 @@ async function startServer() {
       );
       res.status(201).json(newTicket);
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      console.error('[Tickets API] Error:', err.message);
+      res.status(500).json({ error: 'An error occurred while processing your request.' });
     }
   });
 
-  app.patch('/api/tickets/:id', async (req, res) => {
+  app.patch('/api/tickets/:id', requireAdmin, async (req, res) => {
     try {
       const { id } = req.params;
       const { status, resolutionNotes, priority } = req.body;
@@ -227,12 +294,13 @@ async function startServer() {
       );
       res.json(ticket);
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      console.error('[Tickets API] Error:', err.message);
+      res.status(500).json({ error: 'An error occurred while processing your request.' });
     }
   });
 
   // System Logs
-  app.get('/api/logs', (req, res) => {
+  app.get('/api/logs', requireAdmin, (req, res) => {
     res.json(systemLogs);
   });
 

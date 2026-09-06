@@ -7,17 +7,31 @@
     "dev": "node server.js",
     "start": "node server.js",
     "prisma:generate": "npx prisma generate",
-    "prisma:push": "npx prisma db push"
+    "prisma:push": "npx prisma db push",
+    "index:docs": "node index-docs.js"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
+    "@langchain/core": "^1.2.8",
+    "@langchain/google-genai": "^2.2.0",
+    "@langchain/langgraph": "^1.4.10",
+    "@langchain/pinecone": "^1.0.3",
+    "@langchain/textsplitters": "^1.0.1",
     "@pinecone-database/pinecone": "^8.2.0",
     "@prisma/client": "6.2.0",
+    "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "express-rate-limit": "^8.6.2",
+    "jsonwebtoken": "^9.0.3",
+    "langchain": "^1.5.9",
+    "pg": "^8.23.0"
   },
   "devDependencies": {
     "prisma": "6.2.0"
+  },
+  "prisma": {
+    "seed": "node prisma/seed.js"
   }
 }

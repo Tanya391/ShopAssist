@@ -1,14 +1,71 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getEmbedding } from './embeddings.js';
-import { upsertVectors, queryVectorDatabase } from './pinecone.js';
+import crypto from 'crypto';
+import { Document } from '@langchain/core/documents';
+import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters';
+import { GoogleGenerativeAIEmbeddings } from '@langchain/google-genai';
+import { PineconeStore } from '@langchain/pinecone';
+import { getPineconeIndex } from './pinecone.js';
 
-/**
- * 1. Document Loader: Loads Markdown documents from knowledge-base/
- */
+let pineconeVectorStore = null;
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const INDEX_STATE_FILE = path.join(__dirname, '.index-state.json');
+
+function getIndexState() {
+  try {
+    if (fs.existsSync(INDEX_STATE_FILE)) {
+      return JSON.parse(fs.readFileSync(INDEX_STATE_FILE, 'utf-8'));
+    }
+  } catch(e) { 
+    console.error('[Indexer] Failed to parse index state', e.message); 
+  }
+  return {};
+}
+
+function saveIndexState(state) {
+  fs.writeFileSync(INDEX_STATE_FILE, JSON.stringify(state, null, 2));
+}
+
+function getHash(content) {
+  return crypto.createHash('sha256').update(content).digest('hex');
+}
+
+async function getVectorStore() {
+  if (pineconeVectorStore) return pineconeVectorStore;
+
+  const pineconeIndex = getPineconeIndex();
+  if (!pineconeIndex) return null;
+
+  // Monkey-patch to fix LangChain PineconeStore compatibility with Pinecone v8
+  const originalNamespace = pineconeIndex.namespace.bind(pineconeIndex);
+  pineconeIndex.namespace = (ns) => {
+    const namespaceObj = originalNamespace(ns);
+    const originalUpsert = namespaceObj.upsert.bind(namespaceObj);
+    namespaceObj.upsert = async (options) => {
+      if (Array.isArray(options)) {
+        return originalUpsert({ records: options });
+      }
+      return originalUpsert(options);
+    };
+    return namespaceObj;
+  };
+
+  const embeddings = new GoogleGenerativeAIEmbeddings({
+    model: 'gemini-embedding-2-preview',
+    apiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY,
+    maxRetries: 0
+  });
+
+  pineconeVectorStore = await PineconeStore.fromExistingIndex(embeddings, {
+    pineconeIndex
+  });
+
+  return pineconeVectorStore;
+}
+
 export function loadMarkdownKnowledgeDocs() {
-  const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const kbDir = path.join(__dirname, '..', 'knowledge-base');
   const docs = [];
 
@@ -36,106 +93,126 @@ export function loadMarkdownKnowledgeDocs() {
   return docs;
 }
 
-/**
- * 2. RecursiveCharacterTextSplitter for Markdown
- */
-export function splitMarkdownText(text, chunkSize = 600, overlap = 100) {
-  const separators = ['\n## ', '\n### ', '\n\n', '\n', ' '];
+export async function indexSingleDocumentToPinecone(fileName, docTitle, content) {
+  const store = await getVectorStore();
+  if (!store) {
+    console.warn('[RAG Pipeline] Pinecone not configured. Skipping indexing.');
+    return 0;
+  }
+  
+  const state = getIndexState();
+  const fileHash = getHash(content);
+  
+  const existingRecord = state[fileName];
+  if (existingRecord && existingRecord.hash === fileHash) {
+    console.log(`[Indexer] Skipping ${fileName}, content unchanged.`);
+    return 0; // Unchanged
+  }
 
-  function recursiveSplit(textSegment, sepIndex) {
-    if (textSegment.length <= chunkSize || sepIndex >= separators.length) {
-      return [textSegment.trim()].filter(Boolean);
+  // Delete stale vectors if any exist for this document
+  if (existingRecord && existingRecord.chunkCount > 0) {
+    const idsToDelete = [];
+    for (let i = 0; i < existingRecord.chunkCount; i++) {
+      idsToDelete.push(`${fileName}-chunk-${i}`);
     }
-
-    const separator = separators[sepIndex];
-    const splits = textSegment.split(separator);
-    const chunks = [];
-    let currentChunk = '';
-
-    for (const split of splits) {
-      const candidate = currentChunk ? currentChunk + separator + split : split;
-      if (candidate.length <= chunkSize) {
-        currentChunk = candidate;
-      } else {
-        if (currentChunk) {
-          chunks.push(currentChunk.trim());
-        }
-        if (split.length > chunkSize) {
-          const subChunks = recursiveSplit(split, sepIndex + 1);
-          chunks.push(...subChunks);
-          currentChunk = '';
-        } else {
-          currentChunk = split;
-        }
+    const pineconeIndex = getPineconeIndex();
+    if (pineconeIndex) {
+      try {
+        await pineconeIndex.deleteMany(idsToDelete);
+        console.log(`[Indexer] Deleted ${idsToDelete.length} stale chunks for ${fileName}`);
+      } catch (err) {
+        console.warn(`[Indexer] Failed to delete stale chunks for ${fileName}:`, err.message);
       }
     }
-
-    if (currentChunk.trim()) {
-      chunks.push(currentChunk.trim());
-    }
-
-    return chunks;
   }
 
-  return recursiveSplit(text, 0);
+  const doc = new Document({
+    pageContent: content,
+    metadata: { fileName, docTitle }
+  });
+
+  const splitter = new RecursiveCharacterTextSplitter({
+    chunkSize: 600,
+    chunkOverlap: 100,
+    separators: ['\n## ', '\n### ', '\n\n', '\n', ' ']
+  });
+
+  const chunkedDocs = await splitter.splitDocuments([doc]);
+  
+  const docsWithIds = chunkedDocs.map((chunk, i) => {
+    chunk.id = `${fileName}-chunk-${i}`;
+    chunk.metadata.chunkIndex = i;
+    chunk.metadata.text = chunk.pageContent; 
+    return chunk;
+  });
+
+  if (docsWithIds.length > 0) {
+    try {
+      console.log(`[Indexer] Embedding and indexing ${chunkedDocs.length} chunks for ${fileName}...`);
+      await store.addDocuments(docsWithIds, { ids: docsWithIds.map(d => d.id) });
+      console.log(`[Indexer] Successfully indexed ${fileName}.`);
+      
+      // Update state
+      state[fileName] = { hash: fileHash, chunkCount: chunkedDocs.length };
+      saveIndexState(state);
+      
+      return chunkedDocs.length;
+    } catch (err) {
+      console.warn(`[Indexer] Failed to index ${fileName}:`, err.message);
+      return 0;
+    }
+  } else {
+    // If empty document, just record it as 0 chunks
+    state[fileName] = { hash: fileHash, chunkCount: 0 };
+    saveIndexState(state);
+    return 0;
+  }
 }
 
-/**
- * 3. Index Knowledge Base into Pinecone
- */
 export async function indexKnowledgeBaseToPinecone() {
-  const docs = loadMarkdownKnowledgeDocs();
-  const allRecords = [];
-
-  for (const doc of docs) {
-    const textChunks = splitMarkdownText(doc.content);
-
-    for (let i = 0; i < textChunks.length; i++) {
-      const chunkText = textChunks[i];
-      const vector = await getEmbedding(chunkText);
-
-      allRecords.push({
-        id: `${doc.fileName}-chunk-${i}`,
-        values: vector,
-        metadata: {
-          fileName: doc.fileName,
-          docTitle: doc.docTitle,
-          text: chunkText,
-          chunkIndex: i
-        }
-      });
-    }
+  const store = await getVectorStore();
+  if (!store) {
+    console.warn('[RAG Pipeline] Pinecone not configured. Skipping indexing.');
+    return 0;
   }
 
-  if (allRecords.length > 0) {
-    await upsertVectors(allRecords);
-  }
+  const rawDocs = loadMarkdownKnowledgeDocs();
+  if (rawDocs.length === 0) return 0;
 
-  console.log(`[RAG Pipeline] Indexed ${allRecords.length} markdown chunks from ${docs.length} files.`);
-  return allRecords.length;
+  let totalIndexed = 0;
+  for (const doc of rawDocs) {
+    const count = await indexSingleDocumentToPinecone(doc.fileName, doc.docTitle, doc.content);
+    totalIndexed += count;
+  }
+  
+  return totalIndexed;
 }
 
-/**
- * 4. Grounded Retriever: Performs semantic vector search in Pinecone
- */
 export async function retrieveRelevantChunks(userQuery, topK = 3) {
-  const queryVector = await getEmbedding(userQuery);
-  const matches = await queryVectorDatabase(queryVector, topK);
+  const store = await getVectorStore();
+  if (!store) {
+    console.warn('[RAG Pipeline] Pinecone not configured. Returning empty context.');
+    return [];
+  }
 
-  return matches.map(match => ({
-    chunkId: match.id,
-    docId: match.id,
-    id: match.id,
-    fileName: match.metadata.fileName,
-    docTitle: match.metadata.docTitle,
-    text: match.metadata.text,
-    similarityScore: Math.round(match.score * 100) / 100
-  }));
+  try {
+    const results = await store.similaritySearchWithScore(userQuery, topK);
+
+    return results.map(([doc, score]) => ({
+      chunkId: doc.id || 'unknown',
+      docId: doc.id || 'unknown',
+      id: doc.id || 'unknown',
+      fileName: doc.metadata.fileName || 'unknown.md',
+      docTitle: doc.metadata.docTitle || 'Policy Document',
+      text: doc.pageContent,
+      similarityScore: score !== undefined ? score : null 
+    }));
+  } catch (err) {
+    console.warn('[RAG Pipeline] Retrieval failed:', err.message);
+    return [];
+  }
 }
 
-/**
- * 5. Prompt Template Generator for Grounded Gemini Responses
- */
 export function buildGroundedRAGPrompt(userQuery, chunks) {
   const contextStr = chunks
     .map((c, i) => `[Source ${i + 1}: ${c.docTitle} (${c.fileName})]\n${c.text}`)
